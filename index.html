@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FPL Top 15 Picks v5</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 20px; }
+    h1 { font-size: 20px; }
+    #progress { margin-top: 5px; font-size: 14px; color: #555; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { padding: 8px; border-bottom: 1px solid #ccc; text-align: left; }
+    th { background: #f4f4f4; }
+  </style>
+</head>
+<body>
+  <h1>Top 15 Picks (Loading…)</h1>
+  <div id="progress"></div>
+  <table id="results"></table>
+
+<script>
+async function fetchJSON(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return {};
+    return await res.json();
+  } catch(e) {
+    console.warn("Fetch failed:", url, e);
+    return {};
+  }
+}
+
+async function main() {
+  const progressEl = document.getElementById("progress");
+  try {
+    const bootstrap = await fetchJSON("https://fantasy.premierleague.com/api/bootstrap-static/");
+    if (!bootstrap.events) throw new Error("Failed to load bootstrap-static");
+    const currentGW = bootstrap.events.find(e => e.is_current);
+    const elementsById = Object.fromEntries(bootstrap.elements.map(e => [e.id, e]));
+    const teamsById = Object.fromEntries(bootstrap.teams.map(t => [t.id, t]));
+
+    // Get top 50 manager IDs from overall league (id 314)
+    let managers = [];
+    for (let page=1; managers.length<50; page++) {
+      let data = await fetchJSON(`https://fantasy.premierleague.com/api/leagues-classic/314/standings/?page_standings=${page}`);
+      if (data.standings && data.standings.results) {
+        data.standings.results.forEach(r => managers.push(r.entry));
+      }
+    }
+    managers = managers.slice(0,50);
+
+    // Fetch picks safely, one at a time
+    let counts = {};
+    for (let i=0; i<managers.length; i++) {
+      let id = managers[i];
+      let picksData = await fetchJSON(`https://fantasy.premierleague.com/api/entry/${id}/event/${currentGW.id}/picks/`);
+      if (picksData.picks) {
+        picksData.picks.forEach(p => {
+          counts[p.element] = (counts[p.element] || 0) + 1;
+        });
+      }
+      // Update progress
+      progressEl.textContent = `Loaded ${i+1}/${managers.length} manager picks...`;
+      await new Promise(r => setTimeout(r, 300)); // throttle
+    }
+
+    // Aggregate top 15
+    let sorted = Object.entries(counts).map(([id,count]) => {
+      let e = elementsById[id];
+      if (!e) return null;
+      let pos = bootstrap.element_types.find(t => t.id === e.element_type)?.singular_name_short || '';
+      let team = teamsById[e.team]?.short_name || '';
+      return {
+        name: e.web_name,
+        team: team,
+        pos: pos,
+        count: count,
+        percent: (count/50*100).toFixed(0) + "%"
+      };
+    }).filter(Boolean).sort((a,b) => b.count - a.count).slice(0,15);
+
+    // Render table
+    const tbl = document.getElementById("results");
+    tbl.innerHTML = "<tr><th>Player</th><th>Team</th><th>Pos</th><th>Picked</th><th>%</th></tr>" +
+      sorted.map(r =>
+        `<tr><td>${r.name}</td><td>${r.team}</td><td>${r.pos}</td><td>${r.count}/50</td><td>${r.percent}</td></tr>`
+      ).join("");
+
+    document.querySelector("h1").textContent = `Top 15 Picks – ${currentGW.name}`;
+    progressEl.textContent = "Completed!";
+  } catch(err) {
+    console.error(err);
+    document.querySelector("h1").textContent = "Failed to load data.";
+    progressEl.textContent = "";
+  }
+}
+
+main();
+</script>
+</body>
+</html>
