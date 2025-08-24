@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>FPL Top 15 Picks</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; margin: 20px; }
+    h1 { font-size: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { padding: 8px; border-bottom: 1px solid #ccc; text-align: left; }
+    th { background: #f4f4f4; }
+  </style>
+</head>
+<body>
+  <h1>Top 15 Picks (Loading…)</h1>
+  <table id="results"></table>
+
+<script>
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+async function main() {
+  const bootstrap = await fetchJSON("https://fantasy.premierleague.com/api/bootstrap-static/");
+  const currentGW = bootstrap.events.find(e => e.is_current);
+  const elementsById = Object.fromEntries(bootstrap.elements.map(e => [e.id, e]));
+  const teamsById = Object.fromEntries(bootstrap.teams.map(t => [t.id, t]));
+
+  // Get top 50 manager IDs from overall league (id 314)
+  let managers = [];
+  for (let page=1; managers.length<50; page++) {
+    let data = await fetchJSON(`https://fantasy.premierleague.com/api/leagues-classic/314/standings/?page_standings=${page}`);
+    data.standings.results.forEach(r => managers.push(r.entry));
+  }
+  managers = managers.slice(0,50);
+
+  // Fetch picks
+  let counts = {};
+  await Promise.all(managers.map(async id => {
+    try {
+      let picksData = await fetchJSON(`https://fantasy.premierleague.com/api/entry/${id}/event/${currentGW.id}/picks/`);
+      picksData.picks.forEach(p => {
+        counts[p.element] = (counts[p.element] || 0) + 1;
+      });
+    } catch(e) { console.warn("fail", id, e); }
+  }));
+
+  // Aggregate
+  let sorted = Object.entries(counts).map(([id,count]) => {
+    let e = elementsById[id];
+    return {
+      name: e.web_name,
+      team: teamsById[e.team].short_name,
+      pos: bootstrap.element_types.find(t => t.id === e.element_type).singular_name_short,
+      count: count,
+      percent: (count/50*100).toFixed(0)+"%"
+    };
+  }).sort((a,b) => b.count - a.count).slice(0,15);
+
+  // Render
+  const tbl = document.getElementById("results");
+  tbl.innerHTML = "<tr><th>Player</th><th>Team</th><th>Pos</th><th>Picked</th><th>%</th></tr>" +
+    sorted.map(r =>
+      `<tr><td>${r.name}</td><td>${r.team}</td><td>${r.pos}</td><td>${r.count}/50</td><td>${r.percent}</td></tr>`
+    ).join("");
+
+  document.querySelector("h1").textContent = `Top 15 Picks – ${currentGW.name}`;
+}
+
+main().catch(err => alert(err));
+</script>
+</body>
+</html>
